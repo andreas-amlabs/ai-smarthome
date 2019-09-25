@@ -14,13 +14,18 @@
 
 import cv2, numpy as np, datetime
 from PIL import Image, ImageFont, ImageDraw
-import sys, importlib, getopt, yaml
+import sys, importlib, getopt, yaml, time
 
 # Path to keras-yolo3 with Joakim Erikssons PR pulled in.
 yolo_path = '../../keras-yolo3'
 sys.path.append(yolo_path)
 import yolo
 import hacv
+
+def debug(*arg):
+    debug = 0
+    if debug:
+        print(arg)
 
 def usage():
         print("Usage: ", sys.argv[0],"[-v <URI>] [-s] [-d]")
@@ -64,7 +69,7 @@ for opt, arg in opts:
 if config is not None:
         with open(config, 'r') as ymlfile:
                 yaml_cfg = yaml.load(ymlfile)
-        print("Config: ", yaml_cfg)
+        debug("Config: ", yaml_cfg)
         cvconf = yaml_cfg['cvconf']
         plugin = cvconf['plugin'].split(".")
         video_path = cvconf['video']
@@ -74,9 +79,9 @@ if video_path == "0":
    video_path = 0
 
 # setup the video stream
-video=cv2.VideoCapture(video_path)
-ret, frame = video.read()
-avgframe = frame
+#video=cv2.VideoCapture(video_path)
+#ret, frame = video.read()
+#avgframe = frame
 
 # Use the default YOLOv3 model data and its font.
 kwargs = {"model_path" : yolo_path + '/model_data/yolo.h5',
@@ -90,9 +95,31 @@ ha_detect = cls(yaml_cfg)
 
 yolo = yolo.YOLO(**kwargs)
 
+# Double while 1 to be able to recover from any
+# video.read failures
 while(1):
+    debug("Start")
+    video=cv2.VideoCapture(video_path)
+    ret, frame = video.read()
+    avgframe = frame
+
+    while(1):
+        debug("Read")
         ret, frame = video.read()
-        subframe = cv2.subtract(frame, avgframe)
+        if not ret:
+            debug("Close and restart")
+            time.sleep(1)
+            #cv2.waitKey(1000)
+            break
+        try:
+            subframe = cv2.subtract(frame, avgframe)
+        except Exception as e:
+            debug("Exeption: %s" % str(e.message))
+            debug("Frame: %s" % str(frame))
+            debug("AvgFrame: %s" % str(avgframe))
+            #cv2.waitKey(1000)
+            time.sleep(1)
+            continue
         grayscaled = cv2.cvtColor(subframe, cv2.COLOR_BGR2GRAY)
         retval2,th1 = cv2.threshold(grayscaled,35,255,cv2.THRESH_BINARY)
         avgframe = cv2.addWeighted(frame, 0.1, avgframe, 0.9, 0.0)
@@ -104,10 +131,12 @@ while(1):
         th1 = th1 / 255
         w, h = th1.shape
         sum = cv2.sumElems(th1)[0]/(w*h)
-        print("SUM:", cv2.sumElems(th1)[0]/(w*h), w, h)
-        if sum > 0.001:
+        debug("SUM:", cv2.sumElems(th1)[0]/(w*h), w, h)
+        if sum > 0.00001:
                 fconv = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = Image.fromarray(fconv)
+                if image.width == 0 or image.height == 0:
+                    continue
                 out_boxes, out_scores, out_classes = yolo.detect_image_boxes(image)
                 detect_name = ''
                 detect_class = ''
@@ -134,4 +163,8 @@ while(1):
                         file = 'yolo-' + detect_name + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + ".png"
                         cv2.imwrite(file, detect)
 
-        cv2.waitKey(1)
+        #cv2.waitKey(1000)
+        time.sleep(1)
+
+    video.release()
+    cv2.destroyAllWindows()

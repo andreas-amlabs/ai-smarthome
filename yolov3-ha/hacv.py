@@ -11,27 +11,48 @@
 import paho.mqtt.client as mqttClient
 import threading, time, yaml
 
+def debug(*arg):
+    debug = 0
+    if debug:
+        print(arg)
+
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
-        print("Connected to broker:", rc)
+        debug("Connected to broker:", rc)
     else:
-        print("Connection failed: ", rc)
+        debug("Connection failed: ", rc)
 
 class CVMQTTPlugin:
     client = None
     timer = None
     name = "area"
     detects = {}
+    username = None
+    password = None
+    mqtt_tts = None
+    mqtt_motion = None
+    mqtt_camera = None
 
     def __init__(self, cfg):
         if cfg is not None:
             broker_address = cfg['hacv']['host']
             self.name = cfg['hacv']['name']
+            self.username = cfg['hacv']['username']
+            self.password = cfg['hacv']['password']
+            self.mqtt_tts = cfg['hacv']['mqtt_tts']
+            self.mqtt_motion = cfg['hacv']['mqtt_motion']
+            self.mqtt_camera = cfg['hacv']['mqtt_camera']
         else:
             broker_address = "127.0.0.1"
+            self.mqtt_tts = "ha/tts/mqtt"
+            self.mqtt_motion = "ha/motion/mqtt"
+            self.mqtt_camera = "ha/camera/mqtt"
+
         try:
             self.client = mqttClient.Client("Python-CV-YOLO3")
             self.client.on_connect = on_connect
+            if self.username and self.password:
+	        self.client.username_pw_set(self.username, self.password)
             self.client.connect(broker_address)
             self.client.loop_start()
         except:
@@ -41,31 +62,32 @@ class CVMQTTPlugin:
     def no_motion(self):
         if self.client == None:
             return
-        print("publishing motion OFF");
-        self.client.publish("ha/motion/mqtt", '{"on":"OFF"}')
+        debug("publishing motion OFF");
+        self.client.publish(self.mqtt_motion, '{"on":"OFF"}')
 
     def publish_detection(self, detection_type, likelihood):
         if self.client == None:
             return
-        print("Publishing ", detection_type, likelihood)
+        debug("Publishing ", detection_type, likelihood)
+
         if detection_type not in self.detects:
             self.detects[detection_type] = 0
         if self.detects[detection_type] + 10.0 < time.time():
             self.detects[detection_type] = time.time()
-            print("publish TTS")
-            self.client.publish("ha/tts/say", "There is a " + detection_type + " in the " + self.name)
-            print("publish Motion")
-            self.client.publish("ha/motion/mqtt", '{"on":"ON", "type":"' + detection_type + '"}')
+            debug("publish TTS")
+            self.client.publish(self.mqtt_tts, "There is a " + detection_type + " in the " + self.name)
+            debug("publish Motion")
+            self.client.publish(self.mqtt_motion, '{"on":"ON", "type":"' + detection_type + '"}')
             if self.timer is not None:
                 self.timer.cancel()
-            print("Setting up timer for 15 seconds")
+            debug("Setting up timer for 15 seconds")
             self.timer = threading.Timer(15, self.no_motion)
             self.timer.start()
 
     def publish_image(self, image):
         if self.client == None:
             return
-        print("Publishing image.")
+        debug("Publishing image.")
         self.client.publish("ha/camera/mqtt", image)
 
     def __del__(self):
